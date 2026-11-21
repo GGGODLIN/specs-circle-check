@@ -63,7 +63,7 @@ npm run typecheck
 
 ## Project Artifacts & License
 
-- [Demo Video on YouTube (68 s, SPECS 27 Interactive Preview)](https://youtu.be/owwydtpAjEU)
+- [Demo Video on YouTube (68 s, SPECS 27 Interactive Preview)](https://youtu.be/oDSh0mqP54c)
 - [Design Brief (plan-lens approved)](/devpost/design-brief.md)
 - [Devpost Submission Writeup](/devpost/DEVPOST_SUBMISSION.md)
 - Licensed under the [MIT License](/LICENSE).

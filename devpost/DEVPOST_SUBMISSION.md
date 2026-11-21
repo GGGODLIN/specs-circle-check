@@ -56,6 +56,6 @@ We built **Circle Check+** specifically for **Snap SPECS**: a 1:1 world-anchored
 ## Devpost Portal Metadata Checklist
 - **Built With**: `lens-studio`, `snap-specs`, `typescript`, `interaction-kit`, `uikit`, `leaf`, `vitest`, `fast-check`, `ar`
 - **Public Repository**: `https://github.com/GGGODLIN/specs-circle-check`
-- **Demo Video (< 3 min, public YouTube)**: `https://youtu.be/owwydtpAjEU` (`68.46 s`, `1920×1080 @ 30fps`, English, zero live human camera/voiceover)
+- **Demo Video (< 3 min, public YouTube)**: `https://youtu.be/oDSh0mqP54c` (`68.83 s`, `1920×1080 @ 30fps`, English, zero live human camera/voiceover)
 - **Design Brief Included**: `devpost/design-brief.md` (`status: approved`)
 - **Clean-Room Round 2 Provenance**: Repository initialized fresh after Round 2 launch (`2026-11-10`); zero custom code or assets copied from Round 1.
