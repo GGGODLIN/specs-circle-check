@@ -303,8 +303,8 @@ function buildState(params: {
   };
 }
 
-function clampAndSnapTricycleTarget(spec: VehicleGeometrySpec, targetXZ: Vec2XZ): Vec3 {
-  const { dragBounds, keepoutBox, safeParkingRing } = spec.tricycle;
+export function clampTricycleDragTarget(spec: VehicleGeometrySpec, targetXZ: Vec2XZ): Vec3 {
+  const { dragBounds, keepoutBox } = spec.tricycle;
   const clampedX = Math.min(dragBounds.maxX, Math.max(dragBounds.minX, targetXZ.x));
   let clampedZ = Math.min(dragBounds.maxZ, Math.max(dragBounds.minZ, targetXZ.z));
 
@@ -319,12 +319,16 @@ function clampAndSnapTricycleTarget(spec: VehicleGeometrySpec, targetXZ: Vec2XZ)
     clampedZ = keepoutBox.maxZ + 1;
   }
 
-  const distToRing = horizontalDistXZ(
-    { x: clampedX, z: clampedZ },
-    safeParkingRing.center
-  );
+  return { x: clampedX, y: 0, z: clampedZ };
+}
+
+function clampAndSnapTricycleTarget(spec: VehicleGeometrySpec, targetXZ: Vec2XZ): Vec3 {
+  const { safeParkingRing } = spec.tricycle;
+  const clamped = clampTricycleDragTarget(spec, targetXZ);
+
+  const distToRing = horizontalDistXZ(clamped, safeParkingRing.center);
   if (
-    clampedX > safeParkingRing.snapMinXCm ||
+    clamped.x > safeParkingRing.snapMinXCm ||
     distToRing <= safeParkingRing.snapDistanceCm
   ) {
     return {
@@ -334,7 +338,7 @@ function clampAndSnapTricycleTarget(spec: VehicleGeometrySpec, targetXZ: Vec2XZ)
     };
   }
 
-  return { x: clampedX, y: 0, z: clampedZ };
+  return clamped;
 }
 
 export function createInitialState(
