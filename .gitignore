@@ -1,0 +1,35 @@
+# Pre-populated clean-room ignore rules (prior to opening Lens Studio)
+# Secrets, signing keys & editor MCP bearer tokens
+*.pem
+/spk_debug_key.pem
+.mcp.json
+.cursor/mcp.json
+.vscode/mcp.json
+.codex/config.toml
+.claude/settings.local.json
+
+# Lens Studio auto-generated caches, preferences & local state
+Cache/**
+PluginsUserPreferences/**
+Support/**
+BackUp/**
+Workspaces/**
+.vscode/**
+/jsconfig.json
+/tsconfig.json
+leaf_plugin_settings.json
+.virtual-scene.json
+
+# Scoped agent skill metadata & scratch artifacts
+.agents/**
+skills-lock.json
+.scratch/**
+
+# Node / offline test harness artifacts
+node_modules/**
+dist/**
+coverage/**
+*.lock
+
+# OS noise
+.DS_Store
