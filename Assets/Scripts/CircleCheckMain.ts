@@ -35,8 +35,9 @@ const COLOR = {
   tricycle: new vec4(1, 0.3, 0.85, 1),
   safeRing: new vec4(0.1, 0.9, 1, 1),
   label: new vec4(1, 1, 1, 1),
-  blocked: new vec4(1, 0.35, 0.25, 1),
-  cleared: new vec4(0.3, 1, 0.5, 1),
+  barIdle: new vec4(0.75, 0.48, 0.02, 1),
+  barBlocked: new vec4(0.85, 0.06, 0.06, 1),
+  barCleared: new vec4(0.05, 0.7, 0.25, 1),
 }
 
 const ZONE_LABEL: Record<BlindSpotZoneId, string> = {
@@ -83,7 +84,11 @@ export class CircleCheckMain extends BaseScriptComponent {
   private beacons: Record<BlindSpotZoneId, SceneObject>
   private cockpitStrip: SceneObject
   private statusLabel: ElementContent
+  private statusBar: RenderMeshVisual
   private progressLabel: ElementContent
+  private sightlineLabel: ElementContent
+  private sightlineLabelObj: SceneObject
+  private lastSightlineText = ""
   private tricycle: SceneObject
   private manipulation: InteractableManipulation
   // True only between an accepted drag start and its release; a rejected grab never moves the tricycle.
@@ -93,6 +98,7 @@ export class CircleCheckMain extends BaseScriptComponent {
   onAwake(): void {
     this.buildVehicle()
     this.buildSightline()
+    this.buildSightlineLabel()
     this.buildZones()
     this.buildBeacons()
     this.buildSafeRing()
@@ -245,7 +251,9 @@ export class CircleCheckMain extends BaseScriptComponent {
     const showBeam = !s.inDriverSeat
     this.beam.enabled = showBeam
     this.hitMarker.enabled = showBeam && !s.sightline.clear
+    this.sightlineLabelObj.enabled = showBeam
     if (showBeam) {
+      this.renderSightlineLabel(toVec3(s.cameraPose.position))
       const from = toVec3(SPEC.driverEyeLocalPos)
       const eye = toVec3(s.cameraPose.position)
       // Stop short of the viewer's eye so the near plane never clips the clear beam.
@@ -269,7 +277,9 @@ export class CircleCheckMain extends BaseScriptComponent {
     const s = this.state
     const verifiedCount = BLIND_SPOT_ZONE_IDS.filter((z) => s.zoneVerified[z]).length
     const zones = BLIND_SPOT_ZONE_IDS.map((z) => `${ZONE_LABEL[z]} ${s.zoneVerified[z] ? "OK" : "--"}`).join("  ")
-    const progress = `Zones ${verifiedCount}/3  ${zones}  |  Trike ${s.isTricycleCleared ? "clear" : "IN LANE"}`
+    const trike = s.isTricycleCleared ? "clear" : "IN LANE"
+    const refused = s.lastRejectReason !== null ? `  |  Grab refused: ${s.lastRejectReason.replace(/_/g, " ")}` : ""
+    const progress = `Zones ${verifiedCount}/3  ${zones}  |  Trike ${trike}${refused}`
     const key = `${progress}|${s.departureStatus}`
     // Labels re-layout on every write, so skip the per-frame no-op updates.
     if (key === this.lastLabelKey) {
@@ -279,13 +289,13 @@ export class CircleCheckMain extends BaseScriptComponent {
     this.progressLabel.text = progress
     if (s.departureStatus === "CLEARED") {
       this.statusLabel.text = "CLEARED - safe to depart"
-      this.statusLabel.textColorOverride = COLOR.cleared
+      this.statusBar.mainMaterial.mainPass.baseColor = COLOR.barCleared
     } else if (s.departureStatus === "BLOCKED") {
       this.statusLabel.text = "BLOCKED - walk the 3 beacons"
-      this.statusLabel.textColorOverride = COLOR.blocked
+      this.statusBar.mainMaterial.mainPass.baseColor = COLOR.barBlocked
     } else {
       this.statusLabel.text = "Circle Check before you depart"
-      this.statusLabel.textColorOverride = COLOR.label
+      this.statusBar.mainMaterial.mainPass.baseColor = COLOR.barIdle
     }
   }
 
@@ -377,20 +387,57 @@ export class CircleCheckMain extends BaseScriptComponent {
     t.setLocalRotation(quat.lookAt(toVec3(SPEC.driverEyeLocalPos).sub(anchor).normalize(), vec3.up()))
     this.cockpitStrip = strip
 
+    // Saturated backing bar: on an additive display a coloured text fill alone reads as white.
+    const bar = new MeshAccumulator()
+    bar.quad(new vec3(-15, 4, -0.3), new vec3(15, 4, -0.3), new vec3(15, 9, -0.3), new vec3(-15, 9, -0.3))
+    const barObj = createChildSceneObjectWithParentLayer("StatusBar", strip)
+    const barVisual = barObj.createComponent("Component.RenderMeshVisual") as RenderMeshVisual
+    barVisual.mesh = bar.build()
+    barVisual.mainMaterial = this.material(COLOR.barIdle)
+    this.statusBar = barVisual
+
     const status = createChildSceneObjectWithParentLayer("StatusLabel", strip)
-    status.getTransform().setLocalPosition(new vec3(0, 7, 0))
-    this.statusLabel = addContentToElement(status, {text: "", textSize: 40, sizeOverride: new vec2(44, 4)})
+    status.getTransform().setLocalPosition(new vec3(0, 6.5, 0))
+    this.statusLabel = addContentToElement(status, {text: "", textSize: 40, sizeOverride: new vec2(30, 4)})
+    this.statusLabel.useTextColorOverride = true
+    this.statusLabel.textColorOverride = COLOR.label
 
     const progress = createChildSceneObjectWithParentLayer("ZoneProgressLabel", strip)
-    progress.getTransform().setLocalPosition(new vec3(0, 3, 0))
-    this.progressLabel = addContentToElement(progress, {text: "", textSize: 28, sizeOverride: new vec2(44, 3)})
+    progress.getTransform().setLocalPosition(new vec3(0, 2, 0))
+    this.progressLabel = addContentToElement(progress, {text: "", textSize: 26, sizeOverride: new vec2(30, 3)})
 
-    this.makeButton(strip, "ReadyToDepartButton", "Ready to Depart", new vec3(-6, -3, 0), new vec3(20, 5, 1), "Primary", () =>
+    this.makeButton(strip, "ReadyToDepartButton", "Ready to Depart", new vec3(-5.5, -2.8, 0), new vec3(16, 4.5, 1), "Primary", () =>
       this.onReadyPressed(),
     )
-    this.makeButton(strip, "ResetButton", "Reset", new vec3(13, -3, 0), new vec3(11, 5, 1), "Secondary", () =>
+    this.makeButton(strip, "ResetButton", "Reset", new vec3(9.5, -2.8, 0), new vec3(9, 4.5, 1), "Secondary", () =>
       this.onResetPressed(),
     )
+  }
+
+  // Floats on the viewer's own sightline so the first-person view names what the beam is doing.
+  private buildSightlineLabel(): void {
+    const obj = createChildSceneObjectWithParentLayer("SightlineLabel", this.getSceneObject())
+    this.sightlineLabel = addContentToElement(obj, {text: "", textSize: 44, sizeOverride: new vec2(40, 5)})
+    this.sightlineLabel.useTextColorOverride = true
+    this.sightlineLabelObj = obj
+  }
+
+  private renderSightlineLabel(eye: vec3): void {
+    const s = this.state
+    const towardDriver = toVec3(SPEC.driverEyeLocalPos).sub(eye).normalize()
+    const pos = eye.add(towardDriver.uniformScale(75)).add(new vec3(0, 9, 0))
+    const t = this.sightlineLabelObj.getTransform()
+    t.setLocalPosition(pos)
+    t.setLocalRotation(quat.lookAt(eye.sub(pos).normalize(), vec3.up()))
+    t.setLocalScale(vec3.one().uniformScale(2.5))
+    const heightCm = Math.round(eye.y)
+    const blocker = s.sightline.hitOccluderId?.includes("pillar") ? "A-PILLAR" : "HOOD"
+    const text = s.sightline.clear ? `SIGHTLINE CLEAR (${heightCm} cm)` : `BLOCKED BY ${blocker} (${heightCm} cm)`
+    if (text !== this.lastSightlineText) {
+      this.lastSightlineText = text
+      this.sightlineLabel.text = text
+      this.sightlineLabel.textColorOverride = s.sightline.clear ? COLOR.beamClear : COLOR.beamBlocked
+    }
   }
 
   private makeButton(
@@ -457,8 +504,15 @@ export class CircleCheckMain extends BaseScriptComponent {
     this.beam = this.child("SightlineBeam", beam.build(), this.material(COLOR.beamClear, false, true))
     this.beamVisual = this.beam.getComponent("Component.RenderMeshVisual") as RenderMeshVisual
     const marker = new MeshAccumulator()
-    marker.box(new vec3(-7, -7, -7), new vec3(7, 7, 7))
+    // 3D cross (8 cm arm radius) around a solid core, readable from any viewing angle.
+    marker.box(new vec3(-4.5, -4.5, -4.5), new vec3(4.5, 4.5, 4.5))
+    marker.box(new vec3(-8, -1.6, -1.6), new vec3(8, 1.6, 1.6))
+    marker.box(new vec3(-1.6, -8, -1.6), new vec3(1.6, 8, 1.6))
+    marker.box(new vec3(-1.6, -1.6, -8), new vec3(1.6, 1.6, 8))
     this.hitMarker = this.child("SightlineHitMarker", marker.build(), this.material(COLOR.hitMarker, false, true))
+    // Disabling the depth test is not enough: the opaque bumper drawn later would still paint over the overlay.
+    this.beamVisual.setRenderOrder(100)
+    ;(this.hitMarker.getComponent("Component.RenderMeshVisual") as RenderMeshVisual).setRenderOrder(101)
   }
 
   private buildZones(): void {
