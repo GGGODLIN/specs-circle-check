@@ -1,13 +1,22 @@
+import {Interactable} from "InteractionKit.lspkg/Components/Interaction/Interactable/Interactable"
+import {InteractableManipulation} from "InteractionKit.lspkg/Components/Interaction/InteractableManipulation/InteractableManipulation"
+import {Button} from "UIKit.lspkg/Scripts/Components/Button/Button"
+import {ElementContent} from "UIKit.lspkg/Scripts/Components/Content/ElementContent"
+import {addContentToElement} from "UIKit.lspkg/Scripts/Components/Content/ElementContentFactory"
+import {createChildSceneObjectWithParentLayer} from "UIKit.lspkg/Scripts/Utility/SceneUtilities"
 import {
   BLIND_SPOT_ZONE_IDS,
   DEFAULT_VEHICLE_GEOMETRY_SPEC,
+  clampTricycleDragTarget,
   createInitialState,
   getDebugSnapshot as coreSnapshot,
   step,
   type BlindSpotZoneId,
   type CameraPose,
+  type CircleCheckAction,
   type CircleCheckState,
   type DebugSnapshot,
+  type FootprintClassification,
   type Vec3,
 } from "./Core/CircleCheckCore"
 import {MeshAccumulator} from "./Scene/MeshAccumulator"
@@ -22,6 +31,18 @@ const COLOR = {
   hitMarker: new vec4(1, 0.1, 0.1, 1),
   zoneUnchecked: new vec4(1, 0.35, 0.05, 1),
   zoneVerified: new vec4(0.1, 1, 0.75, 1),
+  beacon: new vec4(1, 0.78, 0.1, 1),
+  tricycle: new vec4(1, 0.3, 0.85, 1),
+  safeRing: new vec4(0.1, 0.9, 1, 1),
+  label: new vec4(1, 1, 1, 1),
+  blocked: new vec4(1, 0.35, 0.25, 1),
+  cleared: new vec4(0.3, 1, 0.5, 1),
+}
+
+const ZONE_LABEL: Record<BlindSpotZoneId, string> = {
+  FrontLeftAPillar: "Left",
+  FrontCenterHood: "Hood",
+  FrontRightAPillar: "Right",
 }
 
 function toVec3(p: Vec3): vec3 {
@@ -46,19 +67,38 @@ function flatten(dir: vec3): vec3 {
 export class CircleCheckMain extends BaseScriptComponent {
   @input cameraObject: SceneObject
   @input baseMaterial: Material
+  @input sfxIntercept: AudioTrackAsset
+  @input sfxZoneVerified: AudioTrackAsset
+  @input sfxTrikeSnap: AudioTrackAsset
+  @input sfxDepartCleared: AudioTrackAsset
 
   private state: CircleCheckState = createInitialState(SPEC)
   private lastLoggedKey = ""
+  private lastLabelKey = ""
 
   private beam: SceneObject
   private beamVisual: RenderMeshVisual
   private hitMarker: SceneObject
   private zoneVisuals: Record<BlindSpotZoneId, RenderMeshVisual>
+  private beacons: Record<BlindSpotZoneId, SceneObject>
+  private cockpitStrip: SceneObject
+  private statusLabel: ElementContent
+  private progressLabel: ElementContent
+  private tricycle: SceneObject
+  private manipulation: InteractableManipulation
+  // True only between an accepted drag start and its release; a rejected grab never moves the tricycle.
+  private dragAccepted = false
+  private audio: Record<"intercept" | "zone" | "snap" | "depart", AudioComponent>
 
   onAwake(): void {
     this.buildVehicle()
     this.buildSightline()
     this.buildZones()
+    this.buildBeacons()
+    this.buildSafeRing()
+    this.buildTricycle()
+    this.buildCockpit()
+    this.buildAudio()
     this.createEvent("OnStartEvent").bind(() => {
       this.placeViewpoint(new vec3(-45, 160, 100), toVec3(SPEC.driverEyeLocalPos), true)
     })
@@ -93,6 +133,10 @@ export class CircleCheckMain extends BaseScriptComponent {
     return coreSnapshot(this.state)
   }
 
+  getFootprint(): FootprintClassification {
+    return this.state.footprint
+  }
+
   private currentCameraPose(): CameraPose {
     const inv = this.getTransform().getInvertedWorldTransform()
     const camT = this.cameraObject.getTransform()
@@ -105,9 +149,78 @@ export class CircleCheckMain extends BaseScriptComponent {
   }
 
   private tick(): void {
-    this.state = step(this.state, {type: "MoveCamera", pose: this.currentCameraPose()})
+    this.apply({type: "MoveCamera", pose: this.currentCameraPose()})
+  }
+
+  private apply(action: CircleCheckAction): void {
+    const prev = this.state
+    this.state = step(prev, action)
+    this.playCues(prev, this.state, action)
     this.render()
     this.logTransition()
+  }
+
+  private playCues(prev: CircleCheckState, next: CircleCheckState, action: CircleCheckAction): void {
+    if (action.type === "PressReadyToDepart" && next.departureStatus === "BLOCKED") {
+      this.audio.intercept.play(1)
+    }
+    if (action.type === "DragTricycle" && next.lastRejectReason !== null) {
+      this.audio.intercept.play(1)
+    }
+    if (prev.departureStatus !== "CLEARED" && next.departureStatus === "CLEARED") {
+      this.audio.depart.play(1)
+    }
+    if (!prev.isTricycleCleared && next.isTricycleCleared) {
+      this.audio.snap.play(1)
+    }
+    if (BLIND_SPOT_ZONE_IDS.some((z) => !prev.zoneVerified[z] && next.zoneVerified[z])) {
+      this.audio.zone.play(1)
+    }
+  }
+
+  private onReadyPressed(): void {
+    this.apply({type: "PressReadyToDepart"})
+  }
+
+  private onResetPressed(): void {
+    this.dragAccepted = false
+    this.apply({type: "Reset"})
+  }
+
+  private onTricycleGrab(): void {
+    const p = this.state.tricyclePos
+    // Gate on the product rule (reach + occlusion from the live viewpoint), not on whether the
+    // interactor ray happened to hit the collider: LEAF and far-field rays pass straight through the hood.
+    this.apply({type: "DragTricycle", targetXZ: {x: p.x, z: p.z}})
+    this.dragAccepted = this.state.lastRejectReason === null
+    this.manipulation.setCanTranslate(this.dragAccepted)
+  }
+
+  private onTricycleRelease(): void {
+    if (this.dragAccepted) {
+      const local = this.tricycleLocal()
+      this.apply({type: "DragTricycle", targetXZ: {x: local.x, z: local.z}})
+    }
+    this.dragAccepted = false
+    this.manipulation.setCanTranslate(true)
+    this.syncTricycleVisual()
+  }
+
+  private tricycleLocal(): vec3 {
+    return this.getTransform().getInvertedWorldTransform().multiplyPoint(this.tricycle.getTransform().getWorldPosition())
+  }
+
+  private syncTricycleVisual(): void {
+    const t = this.tricycle.getTransform()
+    if (this.dragAccepted) {
+      const local = this.tricycleLocal()
+      const clamped = clampTricycleDragTarget(SPEC, {x: local.x, z: local.z})
+      t.setLocalPosition(new vec3(clamped.x, 0, clamped.z))
+    } else {
+      t.setLocalPosition(toVec3(this.state.tricyclePos))
+    }
+    t.setLocalRotation(quat.quatIdentity())
+    t.setLocalScale(vec3.one())
   }
 
   private logTransition(): void {
@@ -145,6 +258,34 @@ export class CircleCheckMain extends BaseScriptComponent {
     }
     for (const zone of BLIND_SPOT_ZONE_IDS) {
       this.zoneVisuals[zone].mainMaterial.mainPass.baseColor = s.zoneVerified[zone] ? COLOR.zoneVerified : COLOR.zoneUnchecked
+      this.beacons[zone].enabled = s.walkaroundBeaconsActive && !s.zoneVerified[zone]
+    }
+    this.cockpitStrip.enabled = s.inDriverSeat
+    this.syncTricycleVisual()
+    this.renderLabels()
+  }
+
+  private renderLabels(): void {
+    const s = this.state
+    const verifiedCount = BLIND_SPOT_ZONE_IDS.filter((z) => s.zoneVerified[z]).length
+    const zones = BLIND_SPOT_ZONE_IDS.map((z) => `${ZONE_LABEL[z]} ${s.zoneVerified[z] ? "OK" : "--"}`).join("  ")
+    const progress = `Zones ${verifiedCount}/3  ${zones}  |  Trike ${s.isTricycleCleared ? "clear" : "IN LANE"}`
+    const key = `${progress}|${s.departureStatus}`
+    // Labels re-layout on every write, so skip the per-frame no-op updates.
+    if (key === this.lastLabelKey) {
+      return
+    }
+    this.lastLabelKey = key
+    this.progressLabel.text = progress
+    if (s.departureStatus === "CLEARED") {
+      this.statusLabel.text = "CLEARED - safe to depart"
+      this.statusLabel.textColorOverride = COLOR.cleared
+    } else if (s.departureStatus === "BLOCKED") {
+      this.statusLabel.text = "BLOCKED - walk the 3 beacons"
+      this.statusLabel.textColorOverride = COLOR.blocked
+    } else {
+      this.statusLabel.text = "Circle Check before you depart"
+      this.statusLabel.textColorOverride = COLOR.label
     }
   }
 
@@ -174,6 +315,123 @@ export class CircleCheckMain extends BaseScriptComponent {
     visual.mesh = mesh
     visual.mainMaterial = material
     return obj
+  }
+
+  private buildBeacons(): void {
+    const beacons: Partial<Record<BlindSpotZoneId, SceneObject>> = {}
+    for (const zone of BLIND_SPOT_ZONE_IDS) {
+      const top = SPEC.checkpointBeacons[zone]
+      const acc = new MeshAccumulator()
+      acc.segment(new vec3(top.x, 0, top.z), new vec3(top.x, top.y, top.z), 4)
+      acc.box(new vec3(top.x - 7, top.y, top.z - 7), new vec3(top.x + 7, top.y + 14, top.z + 7))
+      acc.ringXZ(new vec3(top.x, 0, top.z), 22, 1, 24, 2.5)
+      beacons[zone] = this.child(`Beacon_${zone}`, acc.build(), this.material(COLOR.beacon))
+    }
+    this.beacons = beacons as Record<BlindSpotZoneId, SceneObject>
+  }
+
+  private buildSafeRing(): void {
+    const ring = SPEC.tricycle.safeParkingRing
+    const acc = new MeshAccumulator()
+    acc.ringXZ(new vec3(ring.center.x, 0, ring.center.z), ring.radiusCm, 1, 40, 3)
+    acc.ringXZ(new vec3(ring.center.x, 0, ring.center.z), ring.radiusCm - 6, 1, 40, 1.5)
+    this.child("SafeParkingRing", acc.build(), this.material(COLOR.safeRing))
+  }
+
+  private buildTricycle(): void {
+    const t = 2.5
+    const acc = new MeshAccumulator()
+    acc.ringYZ(new vec3(-20, 10, -15), 10, 16, t)
+    acc.ringYZ(new vec3(20, 10, -15), 10, 16, t)
+    acc.ringYZ(new vec3(0, 13, 18), 13, 16, t)
+    acc.segment(new vec3(-20, 10, -15), new vec3(20, 10, -15), t)
+    acc.segment(new vec3(0, 10, -15), new vec3(0, 28, -5), t)
+    acc.segment(new vec3(0, 28, -5), new vec3(0, 34, 14), t)
+    acc.segment(new vec3(0, 13, 18), new vec3(0, 50, 14), t)
+    acc.segment(new vec3(-14, 50, 13), new vec3(14, 50, 13), t)
+    acc.box(new vec3(-9, 28, -14), new vec3(9, 32, 0))
+    this.tricycle = this.child("Tricycle", acc.build(), this.material(COLOR.tricycle))
+
+    const collider = this.tricycle.createComponent("Physics.ColliderComponent") as ColliderComponent
+    const shape = Shape.createBoxShape()
+    shape.size = new vec3(56, 2 * SPEC.tricycle.heightCm, 60)
+    collider.shape = shape
+    collider.fitVisual = false
+
+    const interactable = this.tricycle.createComponent(Interactable.getTypeName()) as Interactable
+    this.manipulation = this.tricycle.createComponent(InteractableManipulation.getTypeName()) as InteractableManipulation
+    this.manipulation.useFilter = false
+    this.manipulation.setCanRotate(false)
+    this.manipulation.setCanScale(false)
+    this.manipulation.setNewInteractable(interactable)
+    this.manipulation.onManipulationStart.add(() => this.onTricycleGrab())
+    this.manipulation.onManipulationEnd.add(() => this.onTricycleRelease())
+  }
+
+  // Anchored at the dashboard point behind the hood trailing edge, tilted to face the driver's eye.
+  private buildCockpit(): void {
+    const strip = createChildSceneObjectWithParentLayer("CockpitStrip", this.getSceneObject())
+    const t = strip.getTransform()
+    const anchor = toVec3(SPEC.dashboardStripLocalPos)
+    t.setLocalPosition(anchor)
+    t.setLocalRotation(quat.lookAt(toVec3(SPEC.driverEyeLocalPos).sub(anchor).normalize(), vec3.up()))
+    this.cockpitStrip = strip
+
+    const status = createChildSceneObjectWithParentLayer("StatusLabel", strip)
+    status.getTransform().setLocalPosition(new vec3(0, 7, 0))
+    this.statusLabel = addContentToElement(status, {text: "", textSize: 40, sizeOverride: new vec2(44, 4)})
+
+    const progress = createChildSceneObjectWithParentLayer("ZoneProgressLabel", strip)
+    progress.getTransform().setLocalPosition(new vec3(0, 3, 0))
+    this.progressLabel = addContentToElement(progress, {text: "", textSize: 28, sizeOverride: new vec2(44, 3)})
+
+    this.makeButton(strip, "ReadyToDepartButton", "Ready to Depart", new vec3(-6, -3, 0), new vec3(20, 5, 1), "Primary", () =>
+      this.onReadyPressed(),
+    )
+    this.makeButton(strip, "ResetButton", "Reset", new vec3(13, -3, 0), new vec3(11, 5, 1), "Secondary", () =>
+      this.onResetPressed(),
+    )
+  }
+
+  private makeButton(
+    parent: SceneObject,
+    name: string,
+    label: string,
+    position: vec3,
+    size: vec3,
+    style: "Primary" | "Secondary",
+    onTrigger: () => void,
+  ): void {
+    const obj = createChildSceneObjectWithParentLayer(name, parent)
+    obj.getTransform().setLocalPosition(position)
+    const button = obj.createComponent(Button.getTypeName()) as Button
+    button.setVariant({theme: "System3", shape: "Rectangle", style})
+    button.size = size
+    button.initialize()
+    addContentToElement(obj, {text: label, textSize: 40})
+    button.onTriggerUp.add(onTrigger)
+  }
+
+  private buildAudio(): void {
+    const make = (name: string, track: AudioTrackAsset): AudioComponent => {
+      const obj = global.scene.createSceneObject(name)
+      obj.setParent(this.getSceneObject())
+      const audio = obj.createComponent("Component.AudioComponent") as AudioComponent
+      audio.audioTrack = track
+      return audio
+    }
+    this.audio = {
+      intercept: make("SfxIntercept", this.sfxIntercept),
+      zone: make("SfxZoneVerified", this.sfxZoneVerified),
+      snap: make("SfxTrikeSnap", this.sfxTrikeSnap),
+      depart: make("SfxDepartCleared", this.sfxDepartCleared),
+    }
+    // User-input feedback cues: LowLatency per the Specs audio guidance (settable only from script).
+    this.createEvent("OnStartEvent").bind(() => {
+      for (const audio of Object.values(this.audio)) {
+        audio.playbackMode = Audio.PlaybackMode.LowLatency
+      }
+    })
   }
 
   private buildVehicle(): void {

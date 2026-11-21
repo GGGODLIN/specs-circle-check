@@ -31,6 +31,10 @@
   ScriptInputsHidden:
     baseMaterial: false
     cameraObject: false
+    sfxDepartCleared: false
+    sfxIntercept: false
+    sfxTrikeSnap: false
+    sfxZoneVerified: false
   ScriptTypesHidden:
     {}
   ReadMe: !<reference> 00000000-0000-0000-0000-000000000000
@@ -42,9 +46,17 @@
   DefaultScriptInputs:
     - cameraObject: !<reference.SceneObject> 00000000-0000-0000-0000-000000000000
       baseMaterial: !<reference.Material> 00000000-0000-0000-0000-000000000000
+      sfxIntercept: !<reference.AudioTrackAsset> 00000000-0000-0000-0000-000000000000
+      sfxZoneVerified: !<reference.AudioTrackAsset> 00000000-0000-0000-0000-000000000000
+      sfxTrikeSnap: !<reference.AudioTrackAsset> 00000000-0000-0000-0000-000000000000
+      sfxDepartCleared: !<reference.AudioTrackAsset> 00000000-0000-0000-0000-000000000000
   ScriptTypes:
     -
       {}
   InputLines:
     - // @input SceneObject cameraObject
     - // @input Asset.Material baseMaterial
+    - // @input Asset.AudioTrackAsset sfxIntercept
+    - // @input Asset.AudioTrackAsset sfxZoneVerified
+    - // @input Asset.AudioTrackAsset sfxTrikeSnap
+    - // @input Asset.AudioTrackAsset sfxDepartCleared
