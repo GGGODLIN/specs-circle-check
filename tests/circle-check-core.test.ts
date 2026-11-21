@@ -279,11 +279,12 @@ describe("CircleCheckCore — Tricycle Reach/Occlusion Guard, Safe-Ring Snap & D
       pose: createCameraPoseLookAt({ x: 20, y: 140, z: 120 }, { x: 15, y: 25, z: 55 })
     });
 
-    // Release inside cab/bumper keepout box is clamped outside keepout
+    // Release inside cab/bumper keepout box is clamped outside keepout with full 25 cm rear-wheel clearance
     const clamped = step(nearTrike, { type: "DragTricycle", targetXZ: { x: 0, z: -50 } });
     expect(clamped.lastRejectReason).toBeNull();
     expect(clamped.tricyclePos.y).toBe(0);
     expect(clamped.tricyclePos.z).toBeGreaterThan(5);
+    expect(clamped.tricyclePos.z - 25).toBeGreaterThan(0);
     expect(clamped.isTricycleCleared).toBe(false);
 
     // Snap by x > +85

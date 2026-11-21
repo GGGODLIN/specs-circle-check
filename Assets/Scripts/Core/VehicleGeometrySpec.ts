@@ -351,14 +351,15 @@ function buildDefaultVehicleGeometrySpec(): VehicleGeometrySpec {
       dragBounds: {
         minX: -180,
         maxX: 180,
-        minZ: 5,
+        // Front bumper sits at z = 0 and rear tricycle wheels extend 25 cm behind origin (z=-15, r=10).
+        minZ: 26,
         maxZ: 300
       },
       keepoutBox: {
         minX: -105,
         maxX: 105,
         minZ: -220,
-        maxZ: 5
+        maxZ: 26
       }
     },
     checkpointBeacons: {
