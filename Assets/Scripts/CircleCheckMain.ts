@@ -185,6 +185,9 @@ export class CircleCheckMain extends BaseScriptComponent {
   }
 
   private onReadyPressed(): void {
+    if (this.dragAccepted) {
+      this.onTricycleRelease()
+    }
     this.apply({type: "PressReadyToDepart"})
   }
 
@@ -222,6 +225,17 @@ export class CircleCheckMain extends BaseScriptComponent {
       const local = this.tricycleLocal()
       const clamped = clampTricycleDragTarget(SPEC, {x: local.x, z: local.z})
       t.setLocalPosition(new vec3(clamped.x, 0, clamped.z))
+      // Advance core position in-flight (pre-snap) so walking alongside the tricycle keeps reach valid
+      // and dragging back into the lane revokes departure clearance immediately.
+      const ring = SPEC.tricycle.safeParkingRing
+      const wouldSnap =
+        clamped.x > ring.snapMinXCm ||
+        Math.hypot(clamped.x - ring.center.x, clamped.z - ring.center.z) <= ring.snapDistanceCm
+      const moved = Math.hypot(clamped.x - this.state.tricyclePos.x, clamped.z - this.state.tricyclePos.z)
+      if (!wouldSnap && moved >= 20) {
+        this.state = step(this.state, {type: "DragTricycle", targetXZ: clamped})
+        this.logTransition()
+      }
     } else {
       t.setLocalPosition(toVec3(this.state.tricyclePos))
     }
@@ -291,7 +305,7 @@ export class CircleCheckMain extends BaseScriptComponent {
       this.statusLabel.text = "CLEARED - safe to depart"
       this.statusBar.mainMaterial.mainPass.baseColor = COLOR.barCleared
     } else if (s.departureStatus === "BLOCKED") {
-      this.statusLabel.text = "BLOCKED - walk the 3 beacons"
+      this.statusLabel.text = s.allZonesVerified ? "BLOCKED - clear the tricycle" : "BLOCKED - walk the 3 beacons"
       this.statusBar.mainMaterial.mainPass.baseColor = COLOR.barBlocked
     } else {
       this.statusLabel.text = "Circle Check before you depart"
@@ -369,6 +383,7 @@ export class CircleCheckMain extends BaseScriptComponent {
     collider.fitVisual = false
 
     const interactable = this.tricycle.createComponent(Interactable.getTypeName()) as Interactable
+    interactable.allowMultipleInteractors = false
     this.manipulation = this.tricycle.createComponent(InteractableManipulation.getTypeName()) as InteractableManipulation
     this.manipulation.useFilter = false
     this.manipulation.setCanRotate(false)
