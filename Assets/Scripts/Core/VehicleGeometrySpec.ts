@@ -11,7 +11,6 @@ export interface Vec2XZ {
 
 export interface OccluderQuad {
   readonly vertices: readonly [Vec3, Vec3, Vec3, Vec3];
-  readonly normal: Vec3;
 }
 
 export interface OccluderPrimitive {
@@ -25,8 +24,6 @@ export type CellClassification = "VehicleBody" | "Clear" | "Blind";
 
 export interface FootprintCell {
   readonly index: number;
-  readonly row: number;
-  readonly col: number;
   readonly centerX: number;
   readonly centerZ: number;
   readonly classification: CellClassification;
@@ -49,12 +46,10 @@ export interface SightlineTraceResult {
 export interface VehicleGeometrySpec {
   readonly vehicleWidthCm: number;
   readonly bumperHeightCm: number;
-  readonly bumperZCm: number;
   readonly hoodRearHeightCm: number;
   readonly hoodRearZCm: number;
   readonly aPillarTopHeightCm: number;
   readonly aPillarRearZCm: number;
-  readonly aPillarWidthCm: number;
   readonly driverEyeLocalPos: Vec3;
   readonly dashboardStripLocalPos: Vec3;
   readonly driverSeatHorizontalRadiusCm: number;
@@ -63,9 +58,7 @@ export interface VehicleGeometrySpec {
   readonly toddlerHeightCm: number;
   readonly footprint: {
     readonly minX: number;
-    readonly maxX: number;
     readonly minZ: number;
-    readonly maxZ: number;
     readonly cellSizeCm: number;
     readonly cols: number;
     readonly rows: number;
@@ -78,8 +71,6 @@ export interface VehicleGeometrySpec {
     readonly floorSampleYCm: number;
   };
   readonly frustum: {
-    readonly horizontalFovDeg: number;
-    readonly verticalFovDeg: number;
     readonly tanHalfHorizontalFov: number;
     readonly tanHalfVerticalFov: number;
     readonly maxInspectDistanceCm: number;
@@ -153,14 +144,6 @@ function crossVec3(a: Vec3, b: Vec3): Vec3 {
   };
 }
 
-function normalizeVec3(v: Vec3): Vec3 {
-  const len = Math.sqrt(dotVec3(v, v));
-  if (len === 0) {
-    return { x: 0, y: 0, z: 0 };
-  }
-  return { x: v.x / len, y: v.y / len, z: v.z / len };
-}
-
 function compareVec3(a: Vec3, b: Vec3): number {
   if (a.x !== b.x) {
     return a.x < b.x ? -1 : 1;
@@ -175,10 +158,8 @@ function compareVec3(a: Vec3, b: Vec3): number {
 }
 
 function createQuad(v0: Vec3, v1: Vec3, v2: Vec3, v3: Vec3): OccluderQuad {
-  const normal = normalizeVec3(crossVec3(subVec3(v1, v0), subVec3(v2, v0)));
   return {
-    vertices: [v0, v1, v2, v3],
-    normal
+    vertices: [v0, v1, v2, v3]
   };
 }
 
@@ -320,12 +301,10 @@ function buildDefaultVehicleGeometrySpec(): VehicleGeometrySpec {
   return deepFreeze({
     vehicleWidthCm: halfWidth * 2,
     bumperHeightCm: bumperY,
-    bumperZCm: bumperZ,
     hoodRearHeightCm: hoodRearY,
     hoodRearZCm: hoodRearZ,
     aPillarTopHeightCm: aPillarTopY,
     aPillarRearZCm: aPillarRearZ,
-    aPillarWidthCm: aPillarWidth,
     driverEyeLocalPos: { x: -45, y: 152, z: -195 },
     dashboardStripLocalPos: { x: -45, y: 136, z: -152 },
     driverSeatHorizontalRadiusCm: 45,
@@ -334,9 +313,7 @@ function buildDefaultVehicleGeometrySpec(): VehicleGeometrySpec {
     toddlerHeightCm: 70,
     footprint: {
       minX: -180,
-      maxX: 180,
       minZ: -40,
-      maxZ: 320,
       cellSizeCm: 20,
       cols: 18,
       rows: 18,
@@ -349,8 +326,6 @@ function buildDefaultVehicleGeometrySpec(): VehicleGeometrySpec {
       floorSampleYCm: 2
     },
     frustum: {
-      horizontalFovDeg,
-      verticalFovDeg,
       tanHalfHorizontalFov: Math.tan((horizontalFovDeg / 2) * DEG_TO_RAD),
       tanHalfVerticalFov: Math.tan((verticalFovDeg / 2) * DEG_TO_RAD),
       maxInspectDistanceCm: 300,
@@ -566,8 +541,6 @@ export function classifyFootprintCells(spec: VehicleGeometrySpec): FootprintClas
       if (insideBody) {
         cells.push({
           index,
-          row,
-          col,
           centerX,
           centerZ,
           classification: "VehicleBody",
@@ -585,8 +558,6 @@ export function classifyFootprintCells(spec: VehicleGeometrySpec): FootprintClas
       if (trace.clear) {
         cells.push({
           index,
-          row,
-          col,
           centerX,
           centerZ,
           classification: "Clear",
@@ -597,8 +568,6 @@ export function classifyFootprintCells(spec: VehicleGeometrySpec): FootprintClas
         zoneBuckets[zone].push(index);
         cells.push({
           index,
-          row,
-          col,
           centerX,
           centerZ,
           classification: "Blind",
