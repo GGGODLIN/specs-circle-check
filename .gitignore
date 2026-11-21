@@ -1,3 +1,22 @@
+# Shipped by Lens Studio
+
+# The lines below are automatically generated and updated by Lens Studio.
+# Please do not modify them manually, as changes will be overwritten each time!
+# If you want to make changes to this file, please put them either above or below this section.
+
+Cache/**
+PluginsUserPreferences/**
+Support/**
+BackUp/**
+Workspaces/**
+.vscode/**
+/jsconfig.json
+/tsconfig.json
+.DS_Store
+/spk_debug_key.pem
+*.lock
+
+# Shipped by Lens Studio
 # Pre-populated clean-room ignore rules (prior to opening Lens Studio)
 # Secrets, signing keys & editor MCP bearer tokens
 *.pem
@@ -19,6 +38,9 @@ Workspaces/**
 /tsconfig.json
 leaf_plugin_settings.json
 .virtual-scene.json
+.clad/**
+ls-live-instance.json
+*.esproj.*.lock
 
 # Scoped agent skill metadata & scratch artifacts
 .agents/**
@@ -33,3 +55,13 @@ coverage/**
 
 # OS noise
 .DS_Store
+
+# BEGIN Lens Studio managed Agents-Docs block
+.mcp.json
+.cursor/mcp.json
+.vscode/mcp.json
+.codex/config.toml
+.claude/settings.local.json
+ls-live-instance.json
+ls-live-instance.json.tmp
+# END Lens Studio managed Agents-Docs block
